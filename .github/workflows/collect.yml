@@ -1,16 +1,32 @@
-name: Hourly Air Quality Data Collector
+name: Run Air Quality Tracker Pipeline
 
 on:
+  push:
+    branches: [ main ]
   schedule:
-    - cron: '0 * * * *'  # Runs every hour
-  workflow_dispatch:      # Allows manual trigger from GitHub Actions tab
+    - cron: '0 * * * *'  # Run every hour
+  workflow_dispatch:      # Allow manual trigger from GitHub UI
 
 jobs:
-  collect:
+  run-pipeline:
     runs-on: ubuntu-latest
 
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root123
+          MYSQL_DATABASE: air_quality
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository Code
         uses: actions/checkout@v4
 
       - name: Set up Python 3.13
@@ -18,11 +34,74 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Install Dependencies
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Collector Test / Diagnostics
+      - name: Initialize Database Schema (sql/schema.sql)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root123
+          DB_NAME: air_quality
         run: |
-          python -c "import requests, pandas; print('Python environment and dependencies ready for Open-Meteo ingestion!')"
+          python -c "
+          import mysql.connector
+          conn = mysql.connector.connect(host='127.0.0.1', port=3306, user='root', password='root123')
+          cursor = conn.cursor()
+          with open('sql/schema.sql', 'r') as f:
+              sql_script = f.read()
+          statements = [s.strip() for s in sql_script.split(';') if s.strip()]
+          for stmt in statements:
+              cursor.execute(stmt)
+          conn.commit()
+          conn.close()
+          print('Schema created successfully on GitHub Actions MySQL container!')
+          "
+
+      - name: Run Data Collection Pipeline (script/collect.py)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root123
+          DB_NAME: air_quality
+        run: |
+          python script/collect.py
+
+      - name: Run SQL Analysis Queries (sql/analysis.sql)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root123
+          DB_NAME: air_quality
+        run: |
+          python -c "
+          import mysql.connector
+          conn = mysql.connector.connect(host='127.0.0.1', port=3306, user='root', password='root123', database='air_quality')
+          cursor = conn.cursor()
+          with open('sql/analysis.sql', 'r') as f:
+              sql_script = f.read()
+          statements = [s.strip() for s in sql_script.split(';') if s.strip()]
+          for idx, stmt in enumerate(statements, 1):
+              cursor.execute(stmt)
+              if cursor.description:
+                  rows = cursor.fetchall()
+                  print(f'Query {idx} returned {len(rows)} rows.')
+          conn.commit()
+          conn.close()
+          print('SQL Analysis Queries completed on GitHub Actions!')
+          "
+
+      - name: Execute Jupyter EDA Notebook (notebooks/eda.ipynb)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: root123
+          DB_NAME: air_quality
+        run: |
+          python -m jupyter nbconvert --execute --to notebook --inplace notebooks/eda.ipynb
