@@ -1,0 +1,22 @@
+# Environment secrets
+.env
+*.env
+
+# Data artifacts & log files
+data/*.log
+data/*.csv
+*.log
+
+# Python cache & build directories
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Jupyter Checkpoints
+.ipynb_checkpoints/
+
+# IDE configurations
+.idea/
+.vscode/
